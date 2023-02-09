@@ -160,7 +160,7 @@ pub enum Descriptor {
 	TimingCodes,
 	EstablishedTimings,
 	Dummy,
-	Unknown([u8; 13]),
+	Unknown{ descriptor_type: u8, data: [u8; 13] },
 }
 
 named!(parse_descriptor<&[u8], Descriptor>,
@@ -218,10 +218,10 @@ named!(parse_descriptor<&[u8], Descriptor>,
 					>> take!(13)
 					>> (Descriptor::Dummy)
 				) |
-				_ => do_parse!(
+				dt => do_parse!(
 					take!(1)
 					>> data: count_fixed!(u8, le_u8, 13)
-					>> (Descriptor::Unknown(data))
+					>> (Descriptor::Unknown{ descriptor_type: dt, data })
 				)
 			)
 			>> (d)
@@ -371,7 +371,7 @@ mod tests {
 				}),
 				Descriptor::Dummy,
 				Descriptor::UnspecifiedText("DJCP6ÇLQ133M1".to_string()),
-				Descriptor::Unknown([2, 65, 3, 40, 0, 18, 0, 0, 11, 1, 10, 32, 32]),
+				Descriptor::Unknown { descriptor_type: 0x00, data: [2, 65, 3, 40, 0, 18, 0, 0, 11, 1, 10, 32, 32] },
 			),
 		};
 
