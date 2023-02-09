@@ -270,7 +270,7 @@ mod tests {
 				assert_eq!(&parsed, expected);
 			},
 			nom::IResult::Error(err) => {
-				panic!(format!("{}", err));
+				panic!("{}", err);
 			},
 			nom::IResult::Incomplete(_) => {
 				panic!("Incomplete");
