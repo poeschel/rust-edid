@@ -56,10 +56,6 @@ named!(parse_display<&[u8], Display>, do_parse!(
 	>> (Display{video_input, width, height, gamma, features})
 ));
 
-named!(parse_chromaticity<&[u8], ()>, do_parse!(
-	take!(10) >> ()
-));
-
 named!(parse_established_timing<&[u8], ()>, do_parse!(
 	take!(3) >> ()
 ));
@@ -234,10 +230,42 @@ named!(parse_descriptor<&[u8], Descriptor>,
 );
 
 #[derive(Debug, PartialEq, Clone)]
+/// 10-bit 2° CIE 1931 xy coordinates for red, green, blue, and white point.
+pub struct ChromaticityCoordinates {
+    red: (u16, u16),
+    green: (u16, u16),
+    blue: (u16, u16),
+    white_point: (u16, u16),
+}
+
+named!(parse_chromaticity_coordinates<&[u8], ChromaticityCoordinates>, do_parse!(
+    rg_lsbs: le_u8
+    >> bw_lsbs: le_u8
+    >> rx_msb: le_u8
+    >> ry_msb: le_u8
+    >> gx_msb: le_u8
+    >> gy_msb: le_u8
+    >> bx_msb: le_u8
+    >> by_msb: le_u8
+    >> wx_msb: le_u8
+    >> wy_msb: le_u8
+    >> (ChromaticityCoordinates {
+        red_x: ((rx_msb as u16) << 2) | ((rg_lsbs & 0xc0) >> 6) as u16,
+        red_y: ((ry_msb as u16) << 2) | ((rg_lsbs & 0x30) >> 4) as u16,
+        green_x: ((gx_msb as u16) << 2) | ((rg_lsbs & 0x0c) >> 2) as u16,
+        green_y: ((gy_msb as u16) << 2) | (rg_lsbs & 0x03) as u16,
+        blue_x: ((bx_msb as u16) << 2) | ((bw_lsbs & 0xc0) >> 6) as u16,
+        blue_y: ((by_msb as u16) << 2) | ((bw_lsbs & 0x30) >> 4) as u16,
+        white_point_x: ((wx_msb as u16) << 2) | ((bw_lsbs & 0x0c) >> 2) as u16,
+        white_point_y: ((wy_msb as u16) << 2) | (bw_lsbs & 0x03) as u16
+    })
+));
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct EDID {
 	pub header: Header,
 	pub display: Display,
-	chromaticity: (), // TODO
+	pub chromaticity: ChromaticityCoordinates,
 	established_timing: (), // TODO
 	standard_timing: (), // TODO
 	pub descriptors: Vec<Descriptor>,
@@ -246,7 +274,7 @@ pub struct EDID {
 named!(parse_edid<&[u8], EDID>, do_parse!(
 	header: parse_header
 	>> display: parse_display
-	>> chromaticity: parse_chromaticity
+	>> chromaticity: parse_chromaticity_coordinates
 	>> established_timing: parse_established_timing
 	>> standard_timing: parse_standard_timing
 	>> descriptors: count!(parse_descriptor, 4)
@@ -299,7 +327,12 @@ mod tests {
 				gamma: 120,
 				features: 42,
 			},
-			chromaticity: (),
+			chromaticity: ChromaticityCoordinates {
+                red: (659, 341),
+                green: (293, 617),
+                blue: (156, 81),
+                white_point: (321, 337),
+            },
 			established_timing: (),
 			standard_timing: (),
 			descriptors: vec!(
@@ -349,7 +382,12 @@ mod tests {
 				gamma: 120,
 				features: 14,
 			},
-			chromaticity: (),
+			chromaticity: ChromaticityCoordinates {
+                red: (655, 337),
+                green: (307, 614),
+                blue: (153, 61),
+                white_point: (320, 336),
+            },
 			established_timing: (),
 			standard_timing: (),
 			descriptors: vec!(
@@ -377,4 +415,47 @@ mod tests {
 
 		test(d, &expected);
 	}
+
+    fn test_chromaticity(d: &[u8], expected: &ChromaticityCoordinates) {
+        match parse_chromaticity_coordinates(d) {
+			nom::IResult::Done(remaining, parsed) => {
+				assert_eq!(remaining.len(), 0);
+				assert_eq!(&parsed, expected);
+			},
+			nom::IResult::Error(err) => {
+				panic!("{}", err);
+			},
+			nom::IResult::Incomplete(_) => {
+				panic!("Incomplete");
+			},
+        }
+    }
+
+    #[test]
+    fn test_chromaticity_coordinates_vga_1() {
+        let d: &[u8] = &include_bytes!("../testdata/card0-VGA-1")[25..35];
+
+        let expected = ChromaticityCoordinates {
+            red: (659, 341),
+            green: (293, 617),
+            blue: (156, 81),
+            white_point: (321, 337),
+        };
+
+        test_chromaticity(d, &expected);
+    }
+
+    #[test]
+    fn test_chromaticity_coordinates_edp_1() {
+        let d: &[u8] = &include_bytes!("../testdata/card0-eDP-1")[25..35];
+
+        let expected = ChromaticityCoordinates {
+            red: (655, 337),
+            green: (307, 614),
+            blue: (153, 61),
+            white_point: (320, 336),
+        };
+
+        test_chromaticity(d, &expected);
+    }
 }
