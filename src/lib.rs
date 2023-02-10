@@ -56,10 +56,6 @@ named!(parse_display<&[u8], Display>, do_parse!(
 	>> (Display{video_input, width, height, gamma, features})
 ));
 
-named!(parse_established_timing<&[u8], ()>, do_parse!(
-	take!(3) >> ()
-));
-
 named!(parse_standard_timing<&[u8], ()>, do_parse!(
 	take!(16) >> ()
 ));
@@ -250,37 +246,238 @@ named!(parse_chromaticity_coordinates<&[u8], ChromaticityCoordinates>, do_parse!
     >> wx_msb: le_u8
     >> wy_msb: le_u8
     >> (ChromaticityCoordinates {
-        red_x: ((rx_msb as u16) << 2) | ((rg_lsbs & 0xc0) >> 6) as u16,
-        red_y: ((ry_msb as u16) << 2) | ((rg_lsbs & 0x30) >> 4) as u16,
-        green_x: ((gx_msb as u16) << 2) | ((rg_lsbs & 0x0c) >> 2) as u16,
-        green_y: ((gy_msb as u16) << 2) | (rg_lsbs & 0x03) as u16,
-        blue_x: ((bx_msb as u16) << 2) | ((bw_lsbs & 0xc0) >> 6) as u16,
-        blue_y: ((by_msb as u16) << 2) | ((bw_lsbs & 0x30) >> 4) as u16,
-        white_point_x: ((wx_msb as u16) << 2) | ((bw_lsbs & 0x0c) >> 2) as u16,
-        white_point_y: ((wy_msb as u16) << 2) | (bw_lsbs & 0x03) as u16
+        red: (((rx_msb as u16) << 2) | ((rg_lsbs & 0xc0) >> 6) as u16, ((ry_msb as u16) << 2) | ((rg_lsbs & 0x30) >> 4) as u16),
+        green: (((gx_msb as u16) << 2) | ((rg_lsbs & 0x0c) >> 2) as u16, ((gy_msb as u16) << 2) | (rg_lsbs & 0x03) as u16),
+        blue: (((bx_msb as u16) << 2) | ((bw_lsbs & 0xc0) >> 6) as u16, ((by_msb as u16) << 2) | ((bw_lsbs & 0x30) >> 4) as u16),
+        white_point: (((wx_msb as u16) << 2) | ((bw_lsbs & 0x0c) >> 2) as u16, ((wy_msb as u16) << 2) | (bw_lsbs & 0x03) as u16)
     })
+));
+
+/// Display mode as specified in established timings.
+pub struct DisplayMode {
+    pub h: u16,
+    pub v: u16,
+    pub f: u16,
+}
+
+/// (Formerly common) established timings.
+#[derive(Debug, PartialEq, Clone)]
+pub enum EstablishedTiming {
+    H720V400F70,
+    H720V400F88,
+    H640V480F60,
+    H640V480F67,
+    H640V480F72,
+    H640V480F75,
+    H800V600F56,
+    H800V600F60,
+    H800V600F72,
+    H800V600F75,
+    H832V624F75,
+    H1024V768F87,
+    H1024V768F60,
+    H1024V768F70,
+    H1024V768F75,
+    H1280V1024F75,
+    H1152V870F75,
+    /// Manufacturer specific timing. Contains the bit position of the
+    /// timing in the lowest 7 bit of the last byte in the established timing
+    /// EDID section.
+    Other(u8),
+}
+
+impl EstablishedTiming {
+    /// Returns the corresponding display mode. Returns `None` if the
+    /// `EstablishedTiming` is manufacturer specific.
+    pub fn as_display_mode(&self) -> Option<DisplayMode> {
+        match self {
+            EstablishedTiming::H720V400F70 => Some(DisplayMode {
+                h: 720,
+                v: 400,
+                f: 70,
+            }),
+            EstablishedTiming::H720V400F88 => Some(DisplayMode {
+                h: 720,
+                v: 400,
+                f: 88,
+            }),
+            EstablishedTiming::H640V480F60 => Some(DisplayMode {
+                h: 640,
+                v: 480,
+                f: 60,
+            }),
+            EstablishedTiming::H640V480F67 => Some(DisplayMode {
+                h: 640,
+                v: 480,
+                f: 67,
+            }),
+            EstablishedTiming::H640V480F72 => Some(DisplayMode {
+                h: 640,
+                v: 480,
+                f: 72,
+            }),
+            EstablishedTiming::H640V480F75 => Some(DisplayMode {
+                h: 640,
+                v: 480,
+                f: 75,
+            }),
+            EstablishedTiming::H800V600F56 => Some(DisplayMode {
+                h: 800,
+                v: 600,
+                f: 56,
+            }),
+            EstablishedTiming::H800V600F60 => Some(DisplayMode {
+                h: 800,
+                v: 600,
+                f: 60,
+            }),
+            EstablishedTiming::H800V600F72 => Some(DisplayMode {
+                h: 800,
+                v: 600,
+                f: 72,
+            }),
+            EstablishedTiming::H800V600F75 => Some(DisplayMode {
+                h: 800,
+                v: 600,
+                f: 75,
+            }),
+            EstablishedTiming::H832V624F75 => Some(DisplayMode {
+                h: 832,
+                v: 624,
+                f: 75,
+            }),
+            EstablishedTiming::H1024V768F87 => Some(DisplayMode {
+                h: 1024,
+                v: 768,
+                f: 87,
+            }),
+            EstablishedTiming::H1024V768F60 => Some(DisplayMode {
+                h: 1024,
+                v: 768,
+                f: 60,
+            }),
+            EstablishedTiming::H1024V768F70 => Some(DisplayMode {
+                h: 1024,
+                v: 768,
+                f: 70,
+            }),
+            EstablishedTiming::H1024V768F75 => Some(DisplayMode {
+                h: 1024,
+                v: 768,
+                f: 75,
+            }),
+            EstablishedTiming::H1280V1024F75 => Some(DisplayMode {
+                h: 1280,
+                v: 1024,
+                f: 75,
+            }),
+            EstablishedTiming::H1152V870F75 => Some(DisplayMode {
+                h: 1152,
+                v: 870,
+                f: 75,
+            }),
+            EstablishedTiming::Other(_) => None,
+        }
+    }
+}
+
+// TODO: this is likely not in the spirit of nom, find a better way
+fn parse_established_timings_bytes(i: &[u8]) -> nom::IResult<&[u8], EstablishedTimings> {
+    let mut iter = i.iter();
+    let mut vec = Vec::new();
+
+    match iter.next() {
+        Some(b) => {
+            for i in 0..7 {
+                let pos = 1 << i;
+                if pos & b > 0 {
+                    let et = match i {
+                        0 => EstablishedTiming::H800V600F60,
+                        1 => EstablishedTiming::H800V600F56,
+                        2 => EstablishedTiming::H640V480F75,
+                        3 => EstablishedTiming::H640V480F72,
+                        4 => EstablishedTiming::H640V480F67,
+                        5 => EstablishedTiming::H640V480F60,
+                        6 => EstablishedTiming::H720V400F88,
+                        7 => EstablishedTiming::H720V400F70,
+                        _ => unreachable!()
+                    };
+                    vec.push(et);
+                }
+            }
+        },
+        None => return nom::IResult::Incomplete(nom::Needed::Size(3)),
+    }
+
+    match iter.next() {
+        Some(b) => {
+            for i in 0..7 {
+                let pos = 1 << i;
+                if pos & b > 0 {
+                    let et = match i {
+                        0 => EstablishedTiming::H1280V1024F75,
+                        1 => EstablishedTiming::H1024V768F75,
+                        2 => EstablishedTiming::H1024V768F70,
+                        3 => EstablishedTiming::H1024V768F60,
+                        4 => EstablishedTiming::H1024V768F87,
+                        5 => EstablishedTiming::H832V624F75,
+                        6 => EstablishedTiming::H800V600F75,
+                        7 => EstablishedTiming::H800V600F72,
+                        _ => unreachable!()
+                    };
+                    vec.push(et);
+                }
+            }
+        },
+        None => return nom::IResult::Incomplete(nom::Needed::Size(2)),
+    }
+
+    match iter.next() {
+        Some(b) => {
+            for i in 0..7 {
+                let pos = 1 << i;
+                if pos & b > 0 {
+                    let et = match i {
+                        7 => EstablishedTiming::H1152V870F75,
+                        other => EstablishedTiming::Other(other),
+                    };
+                    vec.push(et);
+                }
+            }
+        },
+        None => return nom::IResult::Incomplete(nom::Needed::Size(1)),
+    }
+
+    nom::IResult::Done(&i[3..], EstablishedTimings(vec))
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct EstablishedTimings(pub Vec<EstablishedTiming>);
+
+named!(parse_established_timings<&[u8], EstablishedTimings>, do_parse!(
+    v: parse_established_timings_bytes >> (v)
 ));
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct EDID {
-	pub header: Header,
-	pub display: Display,
-	pub chromaticity: ChromaticityCoordinates,
-	established_timing: (), // TODO
-	standard_timing: (), // TODO
-	pub descriptors: Vec<Descriptor>,
+    pub header: Header,
+    pub display: Display,
+    pub chromaticity: ChromaticityCoordinates,
+    pub established_timings: EstablishedTimings,
+    pub standard_timings: (),
+    pub descriptors: Vec<Descriptor>,
 }
 
 named!(parse_edid<&[u8], EDID>, do_parse!(
 	header: parse_header
 	>> display: parse_display
 	>> chromaticity: parse_chromaticity_coordinates
-	>> established_timing: parse_established_timing
-	>> standard_timing: parse_standard_timing
+	>> established_timings: parse_established_timings
+	>> standard_timings: parse_standard_timing
 	>> descriptors: count!(parse_descriptor, 4)
 	>> take!(1) // number of extensions
 	>> take!(1) // checksum
-	>> (EDID{header, display, chromaticity, established_timing, standard_timing, descriptors})
+	>> (EDID{header, display, chromaticity, established_timings, standard_timings, descriptors})
 ));
 
 pub fn parse(data: &[u8]) -> nom::IResult<&[u8], EDID> {
@@ -310,7 +507,7 @@ mod tests {
 	fn test_card0_vga_1() {
 		let d = include_bytes!("../testdata/card0-VGA-1");
 
-		let expected = EDID{
+		let expected = EDID {
 			header: Header{
 				vendor: ['S', 'A', 'M'],
 				product: 596,
@@ -333,30 +530,43 @@ mod tests {
                 blue: (156, 81),
                 white_point: (321, 337),
             },
-			established_timing: (),
-			standard_timing: (),
-			descriptors: vec!(
-				Descriptor::DetailedTiming(DetailedTiming {
-					pixel_clock: 146250,
-					horizontal_active_pixels: 1680,
-					horizontal_blanking_pixels: 560,
-					vertical_active_lines: 1050,
-					vertical_blanking_lines: 39,
-					horizontal_front_porch: 104,
-					horizontal_sync_width: 176,
-					vertical_front_porch: 3,
-					vertical_sync_width: 6,
-					horizontal_size: 474,
-					vertical_size: 296,
-					horizontal_border_pixels: 0,
-					vertical_border_pixels: 0,
-					features: 28
-				}),
-				Descriptor::RangeLimits,
-				Descriptor::ProductName("SyncMaster".to_string()),
-				Descriptor::SerialNumber("HS3P701105".to_string()),
-			),
-		};
+			established_timings: EstablishedTimings(vec![
+                EstablishedTiming::H800V600F60,
+                EstablishedTiming::H800V600F56,
+                EstablishedTiming::H640V480F75,
+                EstablishedTiming::H640V480F72,
+                EstablishedTiming::H640V480F67,
+                EstablishedTiming::H640V480F60,
+                EstablishedTiming::H1280V1024F75,
+                EstablishedTiming::H1024V768F75,
+                EstablishedTiming::H1024V768F70,
+                EstablishedTiming::H1024V768F60,
+                EstablishedTiming::H832V624F75,
+                EstablishedTiming::H800V600F75,
+            ]),
+            standard_timings: (),
+            descriptors: vec![
+                Descriptor::DetailedTiming(DetailedTiming {
+                    pixel_clock: 146250,
+                    horizontal_active_pixels: 1680,
+                    horizontal_blanking_pixels: 560,
+                    vertical_active_lines: 1050,
+                    vertical_blanking_lines: 39,
+                    horizontal_front_porch: 104,
+                    horizontal_sync_width: 176,
+                    vertical_front_porch: 3,
+                    vertical_sync_width: 6,
+                    horizontal_size: 474,
+                    vertical_size: 296,
+                    horizontal_border_pixels: 0,
+                    vertical_border_pixels: 0,
+                    features: 28,
+                }),
+                Descriptor::RangeLimits,
+                Descriptor::ProductName("SyncMaster".to_string()),
+                Descriptor::SerialNumber("HS3P701105".to_string()),
+            ],
+        };
 
 		test(d, &expected);
 	}
@@ -388,30 +598,33 @@ mod tests {
                 blue: (153, 61),
                 white_point: (320, 336),
             },
-			established_timing: (),
-			standard_timing: (),
-			descriptors: vec!(
-				Descriptor::DetailedTiming(DetailedTiming {
-					pixel_clock: 138500,
-					horizontal_active_pixels: 1920,
-					horizontal_blanking_pixels: 160,
-					vertical_active_lines: 1080,
-					vertical_blanking_lines: 31,
-					horizontal_front_porch: 48,
-					horizontal_sync_width: 32,
-					vertical_front_porch: 3,
-					vertical_sync_width: 5,
-					horizontal_size: 294,
-					vertical_size: 165,
-					horizontal_border_pixels: 0,
-					vertical_border_pixels: 0,
-					features: 24,
-				}),
-				Descriptor::Dummy,
-				Descriptor::UnspecifiedText("DJCP6ÇLQ133M1".to_string()),
-				Descriptor::Unknown { descriptor_type: 0x00, data: [2, 65, 3, 40, 0, 18, 0, 0, 11, 1, 10, 32, 32] },
-			),
-		};
+            established_timings: EstablishedTimings(Vec::new()),
+            standard_timings: (),
+            descriptors: vec![
+                Descriptor::DetailedTiming(DetailedTiming {
+                    pixel_clock: 138500,
+                    horizontal_active_pixels: 1920,
+                    horizontal_blanking_pixels: 160,
+                    vertical_active_lines: 1080,
+                    vertical_blanking_lines: 31,
+                    horizontal_front_porch: 48,
+                    horizontal_sync_width: 32,
+                    vertical_front_porch: 3,
+                    vertical_sync_width: 5,
+                    horizontal_size: 294,
+                    vertical_size: 165,
+                    horizontal_border_pixels: 0,
+                    vertical_border_pixels: 0,
+                    features: 24,
+                }),
+                Descriptor::Dummy,
+                Descriptor::UnspecifiedText("DJCP6ÇLQ133M1".to_string()),
+                Descriptor::Unknown {
+                    descriptor_type: 0x00,
+                    data: [2, 65, 3, 40, 0, 18, 0, 0, 11, 1, 10, 32, 32],
+                },
+            ],
+        };
 
 		test(d, &expected);
 	}
