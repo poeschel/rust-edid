@@ -56,10 +56,6 @@ named!(parse_display<&[u8], Display>, do_parse!(
 	>> (Display{video_input, width, height, gamma, features})
 ));
 
-named!(parse_standard_timing<&[u8], ()>, do_parse!(
-	take!(16) >> ()
-));
-
 named!(parse_descriptor_text<&[u8], String>,
 	map!(
 		map!(take!(13), |b| {
@@ -459,12 +455,57 @@ named!(parse_established_timings<&[u8], EstablishedTimings>, do_parse!(
 ));
 
 #[derive(Debug, PartialEq, Clone)]
+/// Image aspect ratio.
+pub enum AspectRatio {
+    AR16_10,
+    AR4_3,
+    AR5_4,
+    AR16_9,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+/// Standard timing information.
+pub struct StandardTiming {
+    pub horizontal_resolution: u16,
+    pub aspect_ratio: AspectRatio,
+    pub refresh_rate: u8,
+}
+
+named!(parse_standard_timing<&[u8], Option<StandardTiming>>,
+    do_parse!(
+        hr: le_u8
+        >> ar_rr: le_u8
+        >> r: cond!(hr != 1 || ar_rr != 1,
+            // we need to give a type hint here
+            add_return_error!(nom::ErrorKind::Custom(0), do_parse!((StandardTiming {
+                horizontal_resolution: (hr as u16 + 31) * 8,
+                aspect_ratio: match ar_rr >> 6 {
+                    0 => AspectRatio::AR16_10,
+                    1 => AspectRatio::AR4_3,
+                    2 => AspectRatio::AR5_4,
+                    3 => AspectRatio::AR16_9,
+                    _ => unreachable!(),
+                },
+                refresh_rate: (ar_rr & 0x3f) + 60,
+            })))
+        ) >> (r)
+    )
+);
+
+named!(parse_standard_timings<&[u8], Vec<StandardTiming>>,
+    map!(
+        count!(parse_standard_timing, 8),
+        |v| v.into_iter().flatten().collect()
+    )
+);
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct EDID {
     pub header: Header,
     pub display: Display,
     pub chromaticity: ChromaticityCoordinates,
     pub established_timings: EstablishedTimings,
-    pub standard_timings: (),
+    pub standard_timings: Vec<StandardTiming>,
     pub descriptors: Vec<Descriptor>,
 }
 
@@ -473,7 +514,7 @@ named!(parse_edid<&[u8], EDID>, do_parse!(
 	>> display: parse_display
 	>> chromaticity: parse_chromaticity_coordinates
 	>> established_timings: parse_established_timings
-	>> standard_timings: parse_standard_timing
+	>> standard_timings: parse_standard_timings
 	>> descriptors: count!(parse_descriptor, 4)
 	>> take!(1) // number of extensions
 	>> take!(1) // checksum
@@ -544,29 +585,50 @@ mod tests {
                 EstablishedTiming::H832V624F75,
                 EstablishedTiming::H800V600F75,
             ]),
-            standard_timings: (),
-            descriptors: vec![
-                Descriptor::DetailedTiming(DetailedTiming {
-                    pixel_clock: 146250,
-                    horizontal_active_pixels: 1680,
-                    horizontal_blanking_pixels: 560,
-                    vertical_active_lines: 1050,
-                    vertical_blanking_lines: 39,
-                    horizontal_front_porch: 104,
-                    horizontal_sync_width: 176,
-                    vertical_front_porch: 3,
-                    vertical_sync_width: 6,
-                    horizontal_size: 474,
-                    vertical_size: 296,
-                    horizontal_border_pixels: 0,
-                    vertical_border_pixels: 0,
-                    features: 28,
-                }),
-                Descriptor::RangeLimits,
-                Descriptor::ProductName("SyncMaster".to_string()),
-                Descriptor::SerialNumber("HS3P701105".to_string()),
+			standard_timings: vec![
+                StandardTiming {
+                    horizontal_resolution: 1680,
+                    aspect_ratio: AspectRatio::AR16_10,
+                    refresh_rate: 60
+                },
+                StandardTiming {
+                    horizontal_resolution: 1280,
+                    aspect_ratio: AspectRatio::AR5_4,
+                    refresh_rate: 60
+                },
+                StandardTiming {
+                    horizontal_resolution: 1280,
+                    aspect_ratio: AspectRatio::AR4_3,
+                    refresh_rate: 60
+                },
+                StandardTiming {
+                    horizontal_resolution: 1152,
+                    aspect_ratio: AspectRatio::AR4_3,
+                    refresh_rate: 75
+                }
             ],
-        };
+			descriptors: vec!(
+				Descriptor::DetailedTiming(DetailedTiming {
+					pixel_clock: 146250,
+					horizontal_active_pixels: 1680,
+					horizontal_blanking_pixels: 560,
+					vertical_active_lines: 1050,
+					vertical_blanking_lines: 39,
+					horizontal_front_porch: 104,
+					horizontal_sync_width: 176,
+					vertical_front_porch: 3,
+					vertical_sync_width: 6,
+					horizontal_size: 474,
+					vertical_size: 296,
+					horizontal_border_pixels: 0,
+					vertical_border_pixels: 0,
+					features: 28
+				}),
+				Descriptor::RangeLimits,
+				Descriptor::ProductName("SyncMaster".to_string()),
+				Descriptor::SerialNumber("HS3P701105".to_string()),
+			),
+		};
 
 		test(d, &expected);
 	}
@@ -598,33 +660,30 @@ mod tests {
                 blue: (153, 61),
                 white_point: (320, 336),
             },
-            established_timings: EstablishedTimings(Vec::new()),
-            standard_timings: (),
-            descriptors: vec![
-                Descriptor::DetailedTiming(DetailedTiming {
-                    pixel_clock: 138500,
-                    horizontal_active_pixels: 1920,
-                    horizontal_blanking_pixels: 160,
-                    vertical_active_lines: 1080,
-                    vertical_blanking_lines: 31,
-                    horizontal_front_porch: 48,
-                    horizontal_sync_width: 32,
-                    vertical_front_porch: 3,
-                    vertical_sync_width: 5,
-                    horizontal_size: 294,
-                    vertical_size: 165,
-                    horizontal_border_pixels: 0,
-                    vertical_border_pixels: 0,
-                    features: 24,
-                }),
-                Descriptor::Dummy,
-                Descriptor::UnspecifiedText("DJCP6ÇLQ133M1".to_string()),
-                Descriptor::Unknown {
-                    descriptor_type: 0x00,
-                    data: [2, 65, 3, 40, 0, 18, 0, 0, 11, 1, 10, 32, 32],
-                },
-            ],
-        };
+			established_timings: EstablishedTimings(Vec::new()),
+			standard_timings: Vec::new(),
+			descriptors: vec!(
+				Descriptor::DetailedTiming(DetailedTiming {
+					pixel_clock: 138500,
+					horizontal_active_pixels: 1920,
+					horizontal_blanking_pixels: 160,
+					vertical_active_lines: 1080,
+					vertical_blanking_lines: 31,
+					horizontal_front_porch: 48,
+					horizontal_sync_width: 32,
+					vertical_front_porch: 3,
+					vertical_sync_width: 5,
+					horizontal_size: 294,
+					vertical_size: 165,
+					horizontal_border_pixels: 0,
+					vertical_border_pixels: 0,
+					features: 24,
+				}),
+				Descriptor::Dummy,
+				Descriptor::UnspecifiedText("DJCP6ÇLQ133M1".to_string()),
+				Descriptor::Unknown { descriptor_type: 0x00, data: [2, 65, 3, 40, 0, 18, 0, 0, 11, 1, 10, 32, 32] },
+			),
+		};
 
 		test(d, &expected);
 	}
@@ -670,5 +729,62 @@ mod tests {
         };
 
         test_chromaticity(d, &expected);
+    }
+
+    fn test_standard_timings(d: &[u8], expected: &Vec<StandardTiming>) {
+        match parse_standard_timings(d) {
+			nom::IResult::Done(remaining, parsed) => {
+				assert_eq!(remaining.len(), 0);
+				assert_eq!(&parsed, expected);
+			},
+			nom::IResult::Error(err) => {
+				panic!("{}", err);
+			},
+			nom::IResult::Incomplete(_) => {
+				panic!("Incomplete");
+			},
+        }
+    }
+
+    #[test]
+    fn test_standard_timings_simple() {
+        let data = [
+            0xD1, 0xC0, // 1920, 16:9, 60Hz
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+        ];
+
+        let expected = vec![
+            StandardTiming {
+                horizontal_resolution: 1920,
+                aspect_ratio: AspectRatio::AR16_9,
+                refresh_rate: 60,
+            }
+        ];
+
+        test_standard_timings(&data, &expected);
+    }
+
+    #[test]
+    fn test_standard_timings_empty() {
+        let data = [
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+            0x01, 0x01, // empty
+        ];
+
+        let expected = Vec::new();
+
+        test_standard_timings(&data, &expected);
     }
 }
