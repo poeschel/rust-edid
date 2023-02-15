@@ -30,3 +30,11 @@ const FORWARD_TABLE: &[u16] = &[
 pub fn forward(code: u8) -> char {
     char::from_u32(FORWARD_TABLE[code as usize] as u32).unwrap()
 }
+
+// TODO: create a lookup table instead
+pub fn codepoint(character: char) -> Option<u8> {
+    FORWARD_TABLE
+        .iter()
+        .position(|v| v == &(character as u16))
+        .map(|b| b as u8)
+}

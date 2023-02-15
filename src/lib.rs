@@ -2,6 +2,7 @@
 extern crate nom;
 
 use nom::{be_u16, le_u16, le_u32, le_u8};
+use std::io::Write;
 
 mod cp437;
 
@@ -14,6 +15,24 @@ pub struct Header {
     pub year: u8, // Starting at year 1990
     pub version: u8,
     pub revision: u8,
+}
+
+impl Header {
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        writer.write_all(&[0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00])?;
+
+        let manufacturer_id: u16 = ((self.vendor[2] as u8 + 1 - b'A') as u16)
+            | ((self.vendor[1] as u8 + 1 - b'A') as u16) << 5
+            | ((self.vendor[0] as u8 + 1 - b'A') as u16) << 10;
+        // the manufacturer ID is a legacy plug and play ID, in big-endian
+        writer.write_all(&manufacturer_id.to_be_bytes())?;
+        writer.write_all(&self.product.to_le_bytes())?;
+        writer.write_all(&self.serial.to_le_bytes())?;
+        writer.write_all(&[self.week])?;
+        writer.write_all(&[self.year])?;
+        writer.write_all(&[self.version])?;
+        writer.write_all(&[self.revision])
+    }
 }
 
 fn parse_vendor(v: u16) -> [char; 3] {
@@ -47,6 +66,16 @@ pub struct Display {
     pub features: u8,
 }
 
+impl Display {
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        writer.write_all(&[self.video_input])?;
+        writer.write_all(&[self.width])?;
+        writer.write_all(&[self.height])?;
+        writer.write_all(&[self.gamma])?;
+        writer.write_all(&[self.features])
+    }
+}
+
 named!(parse_display<&[u8], Display>, do_parse!(
     video_input: le_u8
     >> width: le_u8
@@ -55,18 +84,6 @@ named!(parse_display<&[u8], Display>, do_parse!(
     >> features: le_u8
     >> (Display{video_input, width, height, gamma, features})
 ));
-
-named!(parse_descriptor_text<&[u8], String>,
-    map!(
-        map!(take!(13), |b| {
-            b.iter()
-            .filter(|c| **c != 0x0A)
-            .map(|b| cp437::forward(*b))
-            .collect::<String>()
-        }),
-        |s| s.trim().to_string()
-    )
-);
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub struct DetailedTiming {
@@ -89,6 +106,49 @@ pub struct DetailedTiming {
     /// Border pixels on one side of screen (i.e. total number is twice this)
     pub vertical_border_pixels: u8,
     pub features: u8, /* TODO add enums etc. */
+}
+
+impl DetailedTiming {
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        writer.write_all(&((self.pixel_clock / 10) as u16).to_le_bytes())?;
+        writer.write_all(&[self.horizontal_active_pixels as u8])?;
+        writer.write_all(&[self.horizontal_blanking_pixels as u8])?;
+
+        let byte4 = ((self.horizontal_active_pixels & 0xf00) >> 4) as u8
+            | ((self.horizontal_blanking_pixels & 0xf00) >> 8) as u8;
+        writer.write_all(&[byte4])?;
+
+        writer.write_all(&[self.vertical_active_lines as u8])?;
+        writer.write_all(&[self.vertical_blanking_lines as u8])?;
+
+        let byte7 = ((self.vertical_active_lines & 0xf00) >> 4) as u8
+            | ((self.vertical_blanking_lines & 0xf00) >> 8) as u8;
+        writer.write_all(&[byte7])?;
+
+        writer.write_all(&[self.horizontal_front_porch as u8])?;
+        writer.write_all(&[self.horizontal_sync_width as u8])?;
+
+        let byte10 = ((self.vertical_front_porch & 0x0f) << 4) as u8
+            | (self.vertical_sync_width & 0x0f) as u8;
+        writer.write_all(&[byte10])?;
+
+        let byte11 = ((self.horizontal_front_porch & 0x300) >> 2) as u8
+            | ((self.horizontal_sync_width & 0x300) >> 4) as u8
+            | ((self.vertical_front_porch & 0x300) >> 6) as u8
+            | ((self.vertical_sync_width & 0x300) >> 8) as u8;
+        writer.write_all(&[byte11])?;
+
+        writer.write_all(&[self.horizontal_size as u8])?;
+        writer.write_all(&[self.vertical_size as u8])?;
+
+        let byte14 =
+            ((self.horizontal_size & 0xf00) >> 4) as u8 | ((self.vertical_size & 0xf00) >> 8) as u8;
+        writer.write_all(&[byte14])?;
+
+        writer.write_all(&[self.horizontal_border_pixels])?;
+        writer.write_all(&[self.vertical_border_pixels])?;
+        writer.write_all(&[self.features])
+    }
 }
 
 named!(parse_detailed_timing<&[u8], DetailedTiming>, do_parse!(
@@ -135,20 +195,169 @@ named!(parse_detailed_timing<&[u8], DetailedTiming>, do_parse!(
     })
 ));
 
+#[derive(Debug)]
+pub enum DescriptorTextError {
+    TooLong(usize),
+    InvalidCharacter(char),
+}
+
+impl std::error::Error for DescriptorTextError {}
+
+impl std::fmt::Display for DescriptorTextError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLong(l) => write!(f, "text is too long: max 13 characters, got {}", l),
+            Self::InvalidCharacter(c) => write!(f, "invalid character for CP437: {}", c),
+        }
+    }
+}
+
+/// This contains a CP437 string found in the descriptors section.
+/// Its maximum length is 13 characters.
+#[derive(Debug, PartialEq, Clone)]
+pub struct DescriptorText(Vec<u8>);
+
+impl DescriptorText {
+    const MAX_CHARS: usize = 13;
+
+    pub fn new(string: &str) -> Result<Self, DescriptorTextError> {
+        let len = string.chars().count();
+        if len > Self::MAX_CHARS {
+            return Err(DescriptorTextError::TooLong(len));
+        }
+
+        let mut bytes = Vec::with_capacity(13);
+        for c in string.chars() {
+            match cp437::codepoint(c) {
+                Some(b) => bytes.push(b),
+                None => return Err(DescriptorTextError::InvalidCharacter(c)),
+            }
+        }
+
+        Ok(Self(bytes))
+    }
+
+    pub fn inner(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn into_inner(self) -> Vec<u8> {
+        self.0
+    }
+
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        writer.write_all(&self.0)?;
+
+        let len = self.0.len();
+
+        if len == Self::MAX_CHARS {
+            Ok(())
+        } else {
+            writer.write_all(&[0x0A])?;
+            for _ in self.0.len() + 1..Self::MAX_CHARS {
+                writer.write_all(&[0x20])?;
+            }
+            Ok(())
+        }
+    }
+}
+
+impl std::fmt::Display for DescriptorText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.0
+                .iter()
+                .map(|b| cp437::forward(*b))
+                .collect::<String>()
+        )
+    }
+}
+
+named!(parse_descriptor_text<&[u8], DescriptorText>,
+    map!(
+        map!(take!(13), |b| {
+            b.iter()
+            .filter(|c| **c != 0x0A && **c != 0x20)
+            .cloned()
+            .collect::<Vec<u8>>()
+        }),
+        DescriptorText
+    )
+);
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Descriptor {
     DetailedTiming(DetailedTiming),
-    SerialNumber(String),
-    UnspecifiedText(String),
-    RangeLimits, // TODO
-    ProductName(String),
-    WhitePoint,     // TODO
-    StandardTiming, // TODO
-    ColorManagement,
-    TimingCodes,
-    EstablishedTimings,
+    SerialNumber(DescriptorText),
+    UnspecifiedText(DescriptorText),
+    RangeLimits([u8; 14]), // TODO
+    ProductName(DescriptorText),
+    WhitePoint([u8; 10]),         // TODO
+    StandardTiming([u8; 12]),     // TODO
+    ColorManagement([u8; 13]),    // TODO
+    TimingCodes([u8; 13]),        // TODO
+    EstablishedTimings([u8; 13]), // TODO
     Dummy,
     Unknown { descriptor_type: u8, data: [u8; 13] },
+}
+
+impl Descriptor {
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        match self {
+            Descriptor::DetailedTiming(dt) => dt.to_writer(writer),
+            Descriptor::SerialNumber(sn) => {
+                writer.write_all(&[0x00, 0x00, 0x00, 0xff, 0x00])?;
+                sn.to_writer(writer)
+            }
+            Descriptor::UnspecifiedText(ut) => {
+                writer.write_all(&[0x00, 0x00, 0x00, 0xfe, 0x00])?;
+                ut.to_writer(writer)
+            }
+            Descriptor::RangeLimits(d) => {
+                writer.write_all(&[0x00, 0x00, 0x00, 0xfd])?;
+                writer.write_all(d)
+            }
+            Descriptor::ProductName(pn) => {
+                writer.write_all(&[0x00, 0x00, 0x00, 0xfc, 0x00])?;
+                pn.to_writer(writer)
+            }
+            Descriptor::WhitePoint(d) => {
+                writer.write_all(&[0x00, 0x00, 0x00, 0xfb, 0x00])?;
+                writer.write_all(d)?;
+                writer.write_all(&[0x0A, 0x20, 0x20])
+            }
+            Descriptor::StandardTiming(d) => {
+                writer.write_all(&[0x00, 0x00, 0x00, 0xfa, 0x00])?;
+                writer.write_all(d)?;
+                writer.write_all(&[0x0A])
+            }
+            Descriptor::ColorManagement(d) => {
+                writer.write_all(&[0x00, 0x00, 0x00, 0xf9, 0x00])?;
+                writer.write_all(d)
+            }
+            Descriptor::TimingCodes(d) => {
+                writer.write_all(&[0x00, 0x00, 0x00, 0xf8, 0x00])?;
+                writer.write_all(d)
+            }
+            Descriptor::EstablishedTimings(d) => {
+                writer.write_all(&[0x00, 0x00, 0x00, 0xf7, 0x00])?;
+                writer.write_all(d)
+            }
+            Descriptor::Dummy => writer.write_all(&[
+                0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+            ]),
+            Descriptor::Unknown {
+                descriptor_type,
+                data,
+            } => {
+                writer.write_all(&[0x00, 0x00, 0x00, *descriptor_type, 0x00])?;
+                writer.write_all(data)
+            }
+        }
+    }
 }
 
 named!(parse_descriptor<&[u8], Descriptor>,
@@ -167,9 +376,8 @@ named!(parse_descriptor<&[u8], Descriptor>,
                     >> (Descriptor::UnspecifiedText(s))
                 ) |
                 0xFD => do_parse!(
-                    take!(1)
-                    >> take!(13)
-                    >> (Descriptor::RangeLimits)
+                    data: count_fixed!(u8, le_u8, 14)
+                    >> (Descriptor::RangeLimits(data))
                 ) |
                 0xFC => do_parse!(
                     take!(1)
@@ -178,32 +386,33 @@ named!(parse_descriptor<&[u8], Descriptor>,
                 ) |
                 0xFB => do_parse!(
                     take!(1)
-                    >> take!(13)
-                    >> (Descriptor::WhitePoint)
+                    >> data: count_fixed!(u8, le_u8, 10)
+                    >> take!(3)
+                    >> (Descriptor::WhitePoint(data))
                 ) |
                 0xFA => do_parse!(
                     take!(1)
-                    >> take!(13)
-                    >> (Descriptor::StandardTiming)
+                    >> data: count_fixed!(u8, le_u8, 12)
+                    >> take!(1)
+                    >> (Descriptor::StandardTiming(data))
                 ) |
                 0xF9 => do_parse!(
                     take!(1)
-                    >> take!(13)
-                    >> (Descriptor::ColorManagement)
+                    >> data: count_fixed!(u8, le_u8, 13)
+                    >> (Descriptor::ColorManagement(data))
                 ) |
                 0xF8 => do_parse!(
                     take!(1)
-                    >> take!(13)
-                    >> (Descriptor::TimingCodes)
+                    >> data: count_fixed!(u8, le_u8, 13)
+                    >> (Descriptor::TimingCodes(data))
                 ) |
                 0xF7 => do_parse!(
                     take!(1)
-                    >> take!(13)
-                    >> (Descriptor::EstablishedTimings)
+                    >> data: count_fixed!(u8, le_u8, 13)
+                    >> (Descriptor::EstablishedTimings(data))
                 ) |
                 0x10 => do_parse!(
-                    take!(1)
-                    >> take!(13)
+                    take!(14)
                     >> (Descriptor::Dummy)
                 ) |
                 dt => do_parse!(
@@ -221,6 +430,59 @@ named!(parse_descriptor<&[u8], Descriptor>,
     )
 );
 
+#[derive(Debug)]
+pub struct DescriptorsError(usize);
+
+impl std::error::Error for DescriptorsError {}
+
+impl std::fmt::Display for DescriptorsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "expected 4 descriptors, got {}", self.0)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+/// Wraps a vector of `Descriptor`s to make sure bounds set
+/// by the EDID specification are kept. Exactly four `Descriptor`s
+/// are expected.
+pub struct Descriptors(Vec<Descriptor>);
+
+impl Descriptors {
+    const NUM_DESCRIPTORS: usize = 4;
+
+    pub fn new(descriptors: Vec<Descriptor>) -> Result<Self, DescriptorsError> {
+        let len = descriptors.len();
+
+        if len != Self::NUM_DESCRIPTORS {
+            return Err(DescriptorsError(len));
+        }
+
+        Ok(Self(descriptors))
+    }
+
+    pub fn inner(&self) -> &[Descriptor] {
+        &self.0
+    }
+
+    pub fn into_inner(self) -> Vec<Descriptor> {
+        self.0
+    }
+
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        for d in &self.0 {
+            d.to_writer(writer)?;
+        }
+
+        Ok(())
+    }
+}
+
+named!(parse_descriptors<&[u8], Descriptors>,
+    map!(count!(parse_descriptor, 4),
+        Descriptors
+    )
+);
+
 #[derive(Debug, PartialEq, Clone)]
 /// 10-bit 2° CIE 1931 xy coordinates for red, green, blue, and white point.
 pub struct ChromaticityCoordinates {
@@ -228,6 +490,34 @@ pub struct ChromaticityCoordinates {
     green: (u16, u16),
     blue: (u16, u16),
     white_point: (u16, u16),
+}
+
+impl ChromaticityCoordinates {
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        let rg_lsbs = (((self.red.0 & 0x03) << 6)
+            | ((self.red.1 & 0x03) << 4)
+            | ((self.green.0 & 0x03) << 2)
+            | (self.green.1 & 0x03)) as u8;
+        writer.write_all(&[rg_lsbs])?;
+
+        let bw_lsbs = (((self.blue.0 & 0x03) << 6)
+            | ((self.blue.1 & 0x03) << 4)
+            | ((self.white_point.0 & 0x03) << 2)
+            | (self.white_point.1 & 0x03)) as u8;
+        writer.write_all(&[bw_lsbs])?;
+
+        writer.write_all(&[(self.red.0 >> 2) as u8])?;
+        writer.write_all(&[(self.red.1 >> 2) as u8])?;
+
+        writer.write_all(&[(self.green.0 >> 2) as u8])?;
+        writer.write_all(&[(self.green.1 >> 2) as u8])?;
+
+        writer.write_all(&[(self.blue.0 >> 2) as u8])?;
+        writer.write_all(&[(self.blue.1 >> 2) as u8])?;
+
+        writer.write_all(&[(self.white_point.0 >> 2) as u8])?;
+        writer.write_all(&[(self.white_point.1 >> 2) as u8])
+    }
 }
 
 named!(parse_chromaticity_coordinates<&[u8], ChromaticityCoordinates>, do_parse!(
@@ -450,6 +740,36 @@ fn parse_established_timings_bytes(i: &[u8]) -> nom::IResult<&[u8], EstablishedT
 #[derive(Debug, PartialEq, Clone)]
 pub struct EstablishedTimings(pub Vec<EstablishedTiming>);
 
+impl EstablishedTimings {
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        let mut bytes = [0; 3];
+        for et in &self.0 {
+            match et {
+                EstablishedTiming::H720V400F70 => bytes[0] |= 1 << 7,
+                EstablishedTiming::H720V400F88 => bytes[0] |= 1 << 6,
+                EstablishedTiming::H640V480F60 => bytes[0] |= 1 << 5,
+                EstablishedTiming::H640V480F67 => bytes[0] |= 1 << 4,
+                EstablishedTiming::H640V480F72 => bytes[0] |= 1 << 3,
+                EstablishedTiming::H640V480F75 => bytes[0] |= 1 << 2,
+                EstablishedTiming::H800V600F56 => bytes[0] |= 1 << 1,
+                EstablishedTiming::H800V600F60 => bytes[0] |= 1,
+                EstablishedTiming::H800V600F72 => bytes[1] |= 1 << 7,
+                EstablishedTiming::H800V600F75 => bytes[1] |= 1 << 6,
+                EstablishedTiming::H832V624F75 => bytes[1] |= 1 << 5,
+                EstablishedTiming::H1024V768F87 => bytes[1] |= 1 << 4,
+                EstablishedTiming::H1024V768F60 => bytes[1] |= 1 << 3,
+                EstablishedTiming::H1024V768F70 => bytes[1] |= 1 << 2,
+                EstablishedTiming::H1024V768F75 => bytes[1] |= 1 << 1,
+                EstablishedTiming::H1280V1024F75 => bytes[1] |= 1,
+                EstablishedTiming::H1152V870F75 => bytes[2] |= 1 << 7,
+                EstablishedTiming::Other(pos) => bytes[2] |= 1 << pos,
+            };
+        }
+
+        writer.write_all(&bytes)
+    }
+}
+
 named!(parse_established_timings<&[u8], EstablishedTimings>, do_parse!(
     v: parse_established_timings_bytes >> (v)
 ));
@@ -463,12 +783,97 @@ pub enum AspectRatio {
     AR16_9,
 }
 
+#[derive(Debug)]
+/// Error type returned when creating a `StandardTiming`.
+pub enum StandardTimingError {
+    ResolutionOutOfBounds(u16),
+    ResolutionNotDivBy8(u16),
+    RefreshRateOutOfBounds(u8),
+}
+
+impl std::error::Error for StandardTimingError {}
+
+impl std::fmt::Display for StandardTimingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StandardTimingError::ResolutionOutOfBounds(v) => write!(
+                f,
+                "horizontal resolution out of bounds: {} not in (256..=2288)",
+                v
+            ),
+            StandardTimingError::ResolutionNotDivBy8(v) => {
+                write!(f, "horizontal resolution is not divisable by 8: {}", v)
+            }
+            StandardTimingError::RefreshRateOutOfBounds(v) => {
+                write!(f, "refresh rate out of bounds: {} not in (60..=123)", v)
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 /// Standard timing information.
 pub struct StandardTiming {
-    pub horizontal_resolution: u16,
-    pub aspect_ratio: AspectRatio,
-    pub refresh_rate: u8,
+    horizontal_resolution: u16,
+    aspect_ratio: AspectRatio,
+    refresh_rate: u8,
+}
+
+impl StandardTiming {
+    /// Create a new `StandardTiming` struct.
+    pub fn new(
+        horizontal_resolution: u16,
+        aspect_ratio: AspectRatio,
+        refresh_rate: u8,
+    ) -> Result<Self, StandardTimingError> {
+        if !(256..=2288).contains(&horizontal_resolution) {
+            return Err(StandardTimingError::ResolutionOutOfBounds(
+                horizontal_resolution,
+            ));
+        }
+
+        if horizontal_resolution % 8 != 0 {
+            return Err(StandardTimingError::ResolutionNotDivBy8(
+                horizontal_resolution,
+            ));
+        }
+
+        if !(61..=123).contains(&refresh_rate) {
+            return Err(StandardTimingError::RefreshRateOutOfBounds(refresh_rate));
+        }
+
+        Ok(Self {
+            horizontal_resolution,
+            aspect_ratio,
+            refresh_rate,
+        })
+    }
+
+    pub fn horizontal_resolution(&self) -> u16 {
+        self.horizontal_resolution
+    }
+
+    pub fn aspect_ratio(&self) -> &AspectRatio {
+        &self.aspect_ratio
+    }
+
+    pub fn refresh_rate(&self) -> u8 {
+        self.refresh_rate
+    }
+
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        writer.write_all(&[(self.horizontal_resolution / 8 - 31) as u8])?;
+
+        let mut byte2 = match self.aspect_ratio {
+            AspectRatio::AR16_10 => 0x00,
+            AspectRatio::AR4_3 => 0x40,
+            AspectRatio::AR5_4 => 0x80,
+            AspectRatio::AR16_9 => 0xC0,
+        };
+        byte2 |= self.refresh_rate - 60;
+
+        writer.write_all(&[byte2])
+    }
 }
 
 named!(parse_standard_timing<&[u8], Option<StandardTiming>>,
@@ -492,10 +897,61 @@ named!(parse_standard_timing<&[u8], Option<StandardTiming>>,
     )
 );
 
-named!(parse_standard_timings<&[u8], Vec<StandardTiming>>,
+#[derive(Debug)]
+pub struct StandardTimingsError(usize);
+
+impl std::error::Error for StandardTimingsError {}
+
+impl std::fmt::Display for StandardTimingsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "too many timings: max 8, got {}", self.0)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+/// Wraps a vector of `StandardTiming`s and makes sure bounds
+/// set by the EDID specification are kept.
+pub struct StandardTimings(Vec<StandardTiming>);
+
+impl StandardTimings {
+    const MAX_STANDARD_TIMINGS: usize = 8;
+
+    /// Create a new `StandardTimings` struct from a vector of `StandardTiming`. Returns
+    /// an error if the vector contains more than 8 elements.
+    pub fn new(standard_timings: Vec<StandardTiming>) -> Result<Self, StandardTimingsError> {
+        let len = standard_timings.len();
+        if len > Self::MAX_STANDARD_TIMINGS {
+            return Err(StandardTimingsError(len));
+        }
+
+        Ok(Self(standard_timings))
+    }
+
+    pub fn inner(&self) -> &[StandardTiming] {
+        &self.0
+    }
+
+    pub fn into_inner(self) -> Vec<StandardTiming> {
+        self.0
+    }
+
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        for st in &self.0 {
+            st.to_writer(writer)?;
+        }
+
+        for _ in 0..Self::MAX_STANDARD_TIMINGS - self.0.len() {
+            writer.write_all(&[0x01, 0x01])?;
+        }
+
+        Ok(())
+    }
+}
+
+named!(parse_standard_timings<&[u8], StandardTimings>,
     map!(
         count!(parse_standard_timing, 8),
-        |v| v.into_iter().flatten().collect()
+        |v| StandardTimings(v.into_iter().flatten().collect())
     )
 );
 
@@ -505,8 +961,21 @@ pub struct EDID {
     pub display: Display,
     pub chromaticity: ChromaticityCoordinates,
     pub established_timings: EstablishedTimings,
-    pub standard_timings: Vec<StandardTiming>,
-    pub descriptors: Vec<Descriptor>,
+    pub standard_timings: StandardTimings,
+    pub descriptors: Descriptors,
+}
+
+impl EDID {
+    pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        self.header.to_writer(writer)?;
+        self.display.to_writer(writer)?;
+        self.chromaticity.to_writer(writer)?;
+        self.established_timings.to_writer(writer)?;
+        self.standard_timings.to_writer(writer)?;
+        self.descriptors.to_writer(writer)?;
+        writer.write_all(&[0x00])?;
+        writer.write_all(&[0x00]) // TODO: checksum
+    }
 }
 
 named!(parse_edid<&[u8], EDID>, do_parse!(
@@ -515,7 +984,7 @@ named!(parse_edid<&[u8], EDID>, do_parse!(
     >> chromaticity: parse_chromaticity_coordinates
     >> established_timings: parse_established_timings
     >> standard_timings: parse_standard_timings
-    >> descriptors: count!(parse_descriptor, 4)
+    >> descriptors: parse_descriptors
     >> take!(1) // number of extensions
     >> take!(1) // checksum
     >> (EDID{header, display, chromaticity, established_timings, standard_timings, descriptors})
@@ -528,6 +997,152 @@ pub fn parse(data: &[u8]) -> nom::IResult<&[u8], EDID> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::io::Cursor;
+
+    macro_rules! vga_1_edid {
+        () => {
+            EDID {
+                header: Header {
+                    vendor: ['S', 'A', 'M'],
+                    product: 596,
+                    serial: 1146106418,
+                    week: 27,
+                    year: 17,
+                    version: 1,
+                    revision: 3,
+                },
+                display: Display {
+                    video_input: 14,
+                    width: 47,
+                    height: 30,
+                    gamma: 120,
+                    features: 42,
+                },
+                chromaticity: ChromaticityCoordinates {
+                    red: (659, 341),
+                    green: (293, 617),
+                    blue: (156, 81),
+                    white_point: (321, 337),
+                },
+                established_timings: EstablishedTimings(vec![
+                    EstablishedTiming::H800V600F60,
+                    EstablishedTiming::H800V600F56,
+                    EstablishedTiming::H640V480F75,
+                    EstablishedTiming::H640V480F72,
+                    EstablishedTiming::H640V480F67,
+                    EstablishedTiming::H640V480F60,
+                    EstablishedTiming::H1280V1024F75,
+                    EstablishedTiming::H1024V768F75,
+                    EstablishedTiming::H1024V768F70,
+                    EstablishedTiming::H1024V768F60,
+                    EstablishedTiming::H832V624F75,
+                    EstablishedTiming::H800V600F75,
+                ]),
+                standard_timings: StandardTimings(vec![
+                    StandardTiming {
+                        horizontal_resolution: 1680,
+                        aspect_ratio: AspectRatio::AR16_10,
+                        refresh_rate: 60,
+                    },
+                    StandardTiming {
+                        horizontal_resolution: 1280,
+                        aspect_ratio: AspectRatio::AR5_4,
+                        refresh_rate: 60,
+                    },
+                    StandardTiming {
+                        horizontal_resolution: 1280,
+                        aspect_ratio: AspectRatio::AR4_3,
+                        refresh_rate: 60,
+                    },
+                    StandardTiming {
+                        horizontal_resolution: 1152,
+                        aspect_ratio: AspectRatio::AR4_3,
+                        refresh_rate: 75,
+                    },
+                ]),
+                descriptors: Descriptors(vec![
+                    Descriptor::DetailedTiming(DetailedTiming {
+                        pixel_clock: 146250,
+                        horizontal_active_pixels: 1680,
+                        horizontal_blanking_pixels: 560,
+                        vertical_active_lines: 1050,
+                        vertical_blanking_lines: 39,
+                        horizontal_front_porch: 104,
+                        horizontal_sync_width: 176,
+                        vertical_front_porch: 3,
+                        vertical_sync_width: 6,
+                        horizontal_size: 474,
+                        vertical_size: 296,
+                        horizontal_border_pixels: 0,
+                        vertical_border_pixels: 0,
+                        features: 28,
+                    }),
+                    Descriptor::RangeLimits([
+                        0x00, 0x38, 0x4B, 0x1E, 0x51, 0x11, 0x00, 0x0A, 0x20, 0x20, 0x20, 0x20,
+                        0x20, 0x20,
+                    ]),
+                    Descriptor::ProductName(DescriptorText::new("SyncMaster").unwrap()),
+                    Descriptor::SerialNumber(DescriptorText::new("HS3P701105").unwrap()),
+                ]),
+            }
+        };
+    }
+
+    macro_rules! edp_1_edid {
+        () => {
+            EDID {
+                header: Header {
+                    vendor: ['S', 'H', 'P'],
+                    product: 5193,
+                    serial: 0,
+                    week: 32,
+                    year: 25,
+                    version: 1,
+                    revision: 4,
+                },
+                display: Display {
+                    video_input: 165,
+                    width: 29,
+                    height: 17,
+                    gamma: 120,
+                    features: 14,
+                },
+                chromaticity: ChromaticityCoordinates {
+                    red: (655, 337),
+                    green: (307, 614),
+                    blue: (153, 61),
+                    white_point: (320, 336),
+                },
+                established_timings: EstablishedTimings(Vec::new()),
+                standard_timings: StandardTimings(Vec::new()),
+                descriptors: Descriptors(vec![
+                    Descriptor::DetailedTiming(DetailedTiming {
+                        pixel_clock: 138500,
+                        horizontal_active_pixels: 1920,
+                        horizontal_blanking_pixels: 160,
+                        vertical_active_lines: 1080,
+                        vertical_blanking_lines: 31,
+                        horizontal_front_porch: 48,
+                        horizontal_sync_width: 32,
+                        vertical_front_porch: 3,
+                        vertical_sync_width: 5,
+                        horizontal_size: 294,
+                        vertical_size: 165,
+                        horizontal_border_pixels: 0,
+                        vertical_border_pixels: 0,
+                        features: 24,
+                    }),
+                    Descriptor::Dummy,
+                    Descriptor::UnspecifiedText(DescriptorText::new("DJCP6ÇLQ133M1").unwrap()),
+                    Descriptor::Unknown {
+                        descriptor_type: 0x00,
+                        data: [2, 65, 3, 40, 0, 18, 0, 0, 11, 1, 10, 32, 32],
+                    },
+                ]),
+            }
+        };
+    }
 
     fn test(d: &[u8], expected: &EDID) {
         match parse(d) {
@@ -548,88 +1163,7 @@ mod tests {
     fn test_card0_vga_1() {
         let d = include_bytes!("../testdata/card0-VGA-1");
 
-        let expected = EDID {
-            header: Header {
-                vendor: ['S', 'A', 'M'],
-                product: 596,
-                serial: 1146106418,
-                week: 27,
-                year: 17,
-                version: 1,
-                revision: 3,
-            },
-            display: Display {
-                video_input: 14,
-                width: 47,
-                height: 30,
-                gamma: 120,
-                features: 42,
-            },
-            chromaticity: ChromaticityCoordinates {
-                red: (659, 341),
-                green: (293, 617),
-                blue: (156, 81),
-                white_point: (321, 337),
-            },
-            established_timings: EstablishedTimings(vec![
-                EstablishedTiming::H800V600F60,
-                EstablishedTiming::H800V600F56,
-                EstablishedTiming::H640V480F75,
-                EstablishedTiming::H640V480F72,
-                EstablishedTiming::H640V480F67,
-                EstablishedTiming::H640V480F60,
-                EstablishedTiming::H1280V1024F75,
-                EstablishedTiming::H1024V768F75,
-                EstablishedTiming::H1024V768F70,
-                EstablishedTiming::H1024V768F60,
-                EstablishedTiming::H832V624F75,
-                EstablishedTiming::H800V600F75,
-            ]),
-            standard_timings: vec![
-                StandardTiming {
-                    horizontal_resolution: 1680,
-                    aspect_ratio: AspectRatio::AR16_10,
-                    refresh_rate: 60,
-                },
-                StandardTiming {
-                    horizontal_resolution: 1280,
-                    aspect_ratio: AspectRatio::AR5_4,
-                    refresh_rate: 60,
-                },
-                StandardTiming {
-                    horizontal_resolution: 1280,
-                    aspect_ratio: AspectRatio::AR4_3,
-                    refresh_rate: 60,
-                },
-                StandardTiming {
-                    horizontal_resolution: 1152,
-                    aspect_ratio: AspectRatio::AR4_3,
-                    refresh_rate: 75,
-                },
-            ],
-            descriptors: vec![
-                Descriptor::DetailedTiming(DetailedTiming {
-                    pixel_clock: 146250,
-                    horizontal_active_pixels: 1680,
-                    horizontal_blanking_pixels: 560,
-                    vertical_active_lines: 1050,
-                    vertical_blanking_lines: 39,
-                    horizontal_front_porch: 104,
-                    horizontal_sync_width: 176,
-                    vertical_front_porch: 3,
-                    vertical_sync_width: 6,
-                    horizontal_size: 474,
-                    vertical_size: 296,
-                    horizontal_border_pixels: 0,
-                    vertical_border_pixels: 0,
-                    features: 28,
-                }),
-                Descriptor::RangeLimits,
-                Descriptor::ProductName("SyncMaster".to_string()),
-                Descriptor::SerialNumber("HS3P701105".to_string()),
-            ],
-        };
-
+        let expected = vga_1_edid!();
         test(d, &expected);
     }
 
@@ -637,57 +1171,7 @@ mod tests {
     fn test_card0_edp_1() {
         let d = include_bytes!("../testdata/card0-eDP-1");
 
-        let expected = EDID {
-            header: Header {
-                vendor: ['S', 'H', 'P'],
-                product: 5193,
-                serial: 0,
-                week: 32,
-                year: 25,
-                version: 1,
-                revision: 4,
-            },
-            display: Display {
-                video_input: 165,
-                width: 29,
-                height: 17,
-                gamma: 120,
-                features: 14,
-            },
-            chromaticity: ChromaticityCoordinates {
-                red: (655, 337),
-                green: (307, 614),
-                blue: (153, 61),
-                white_point: (320, 336),
-            },
-            established_timings: EstablishedTimings(Vec::new()),
-            standard_timings: Vec::new(),
-            descriptors: vec![
-                Descriptor::DetailedTiming(DetailedTiming {
-                    pixel_clock: 138500,
-                    horizontal_active_pixels: 1920,
-                    horizontal_blanking_pixels: 160,
-                    vertical_active_lines: 1080,
-                    vertical_blanking_lines: 31,
-                    horizontal_front_porch: 48,
-                    horizontal_sync_width: 32,
-                    vertical_front_porch: 3,
-                    vertical_sync_width: 5,
-                    horizontal_size: 294,
-                    vertical_size: 165,
-                    horizontal_border_pixels: 0,
-                    vertical_border_pixels: 0,
-                    features: 24,
-                }),
-                Descriptor::Dummy,
-                Descriptor::UnspecifiedText("DJCP6ÇLQ133M1".to_string()),
-                Descriptor::Unknown {
-                    descriptor_type: 0x00,
-                    data: [2, 65, 3, 40, 0, 18, 0, 0, 11, 1, 10, 32, 32],
-                },
-            ],
-        };
-
+        let expected = edp_1_edid!();
         test(d, &expected);
     }
 
@@ -734,7 +1218,7 @@ mod tests {
         test_chromaticity(d, &expected);
     }
 
-    fn test_standard_timings(d: &[u8], expected: &Vec<StandardTiming>) {
+    fn test_standard_timings(d: &[u8], expected: &StandardTimings) {
         match parse_standard_timings(d) {
             nom::IResult::Done(remaining, parsed) => {
                 assert_eq!(remaining.len(), 0);
@@ -762,11 +1246,11 @@ mod tests {
             0x01, 0x01, // empty
         ];
 
-        let expected = vec![StandardTiming {
+        let expected = StandardTimings(vec![StandardTiming {
             horizontal_resolution: 1920,
             aspect_ratio: AspectRatio::AR16_9,
             refresh_rate: 60,
-        }];
+        }]);
 
         test_standard_timings(&data, &expected);
     }
@@ -784,8 +1268,176 @@ mod tests {
             0x01, 0x01, // empty
         ];
 
-        let expected = Vec::new();
+        let expected = StandardTimings(Vec::new());
 
         test_standard_timings(&data, &expected);
+    }
+
+    fn test_header_roundtrip(expected: &Header) {
+        let mut cursor = Cursor::new(Vec::with_capacity(20));
+        expected.to_writer(&mut cursor).unwrap();
+
+        let len = cursor.get_ref().len();
+        assert_eq!(len, 20);
+
+        let testee = parse_header(cursor.get_ref()).unwrap().1;
+
+        assert_eq!(&testee, expected);
+    }
+
+    #[test]
+    fn test_vga_1_header_roundtrip() {
+        let expected = vga_1_edid!().header;
+        test_header_roundtrip(&expected);
+    }
+
+    #[test]
+    fn test_edp_1_header_roundtrip() {
+        let expected = edp_1_edid!().header;
+        test_header_roundtrip(&expected);
+    }
+
+    fn test_display_roundtrip(expected: &Display) {
+        let mut cursor = Cursor::new(Vec::with_capacity(5));
+        expected.to_writer(&mut cursor).unwrap();
+
+        let len = cursor.get_ref().len();
+        assert_eq!(len, 5);
+
+        let testee = parse_display(cursor.get_ref()).unwrap().1;
+
+        assert_eq!(&testee, expected);
+    }
+
+    #[test]
+    fn test_vga_1_display_roundtrip() {
+        let expected = vga_1_edid!().display;
+        test_display_roundtrip(&expected);
+    }
+
+    #[test]
+    fn test_edp_1_display_roundtrip() {
+        let expected = edp_1_edid!().display;
+        test_display_roundtrip(&expected);
+    }
+
+    fn test_chromaticity_roundtrip(expected: &ChromaticityCoordinates) {
+        let mut cursor = Cursor::new(Vec::with_capacity(10));
+        expected.to_writer(&mut cursor).unwrap();
+
+        let len = cursor.get_ref().len();
+        assert_eq!(len, 10);
+
+        let testee = parse_chromaticity_coordinates(cursor.get_ref()).unwrap().1;
+
+        assert_eq!(&testee, expected);
+    }
+
+    #[test]
+    fn test_vga_1_chromaticity_roundtrip() {
+        let expected = vga_1_edid!().chromaticity;
+        test_chromaticity_roundtrip(&expected);
+    }
+
+    #[test]
+    fn test_edp_1_chromaticity_roundtrip() {
+        let expected = edp_1_edid!().chromaticity;
+        test_chromaticity_roundtrip(&expected);
+    }
+
+    fn test_est_timings_roundtrip(expected: &EstablishedTimings) {
+        let mut cursor = Cursor::new(Vec::with_capacity(3));
+        expected.to_writer(&mut cursor).unwrap();
+
+        let len = cursor.get_ref().len();
+        assert_eq!(len, 3);
+
+        let testee = parse_established_timings(cursor.get_ref()).unwrap().1;
+
+        assert_eq!(&testee, expected);
+    }
+
+    #[test]
+    fn test_vga_1_est_timings_roundtrip() {
+        let expected = vga_1_edid!().established_timings;
+        test_est_timings_roundtrip(&expected);
+    }
+
+    #[test]
+    fn test_edp_1_est_timings_roundtrip() {
+        let expected = edp_1_edid!().established_timings;
+        test_est_timings_roundtrip(&expected);
+    }
+
+    fn test_standard_timings_roundtrip(expected: &StandardTimings) {
+        let mut cursor = Cursor::new(Vec::with_capacity(16));
+        expected.to_writer(&mut cursor).unwrap();
+
+        let len = cursor.get_ref().len();
+        assert_eq!(len, 16);
+
+        let testee = parse_standard_timings(cursor.get_ref()).unwrap().1;
+
+        assert_eq!(&testee, expected);
+    }
+
+    #[test]
+    fn test_vga_1_standard_timings_roundtrip() {
+        let expected = vga_1_edid!().standard_timings;
+        test_standard_timings_roundtrip(&expected);
+    }
+
+    #[test]
+    fn test_edp_1_standard_timings_roundtrip() {
+        let expected = edp_1_edid!().standard_timings;
+        test_standard_timings_roundtrip(&expected);
+    }
+
+    fn test_descriptors_roundtrip(expected: &Descriptors) {
+        let mut cursor = Cursor::new(Vec::with_capacity(72));
+        expected.to_writer(&mut cursor).unwrap();
+
+        let len = cursor.get_ref().len();
+        assert_eq!(len, 72);
+
+        let testee = parse_descriptors(cursor.get_ref()).unwrap().1;
+
+        assert_eq!(&testee, expected);
+    }
+
+    #[test]
+    fn test_vga_1_descriptors_roundtrip() {
+        let expected = vga_1_edid!().descriptors;
+        test_descriptors_roundtrip(&expected);
+    }
+
+    #[test]
+    fn test_edp_1_descriptors_roundtrip() {
+        let expected = vga_1_edid!().descriptors;
+        test_descriptors_roundtrip(&expected);
+    }
+
+    #[test]
+    fn test_vga_1_roundtrip() {
+        let expected = vga_1_edid!();
+
+        let mut cursor = Cursor::new(Vec::with_capacity(128));
+        expected.to_writer(&mut cursor).unwrap();
+
+        let testee = parse_edid(cursor.get_ref()).unwrap().1;
+
+        assert_eq!(testee, expected);
+    }
+
+    #[test]
+    fn test_edp_1_roundtrip() {
+        let expected = edp_1_edid!();
+
+        let mut cursor = Cursor::new(Vec::with_capacity(128));
+        expected.to_writer(&mut cursor).unwrap();
+
+        let testee = parse_edid(cursor.get_ref()).unwrap().1;
+
+        assert_eq!(testee, expected);
     }
 }
