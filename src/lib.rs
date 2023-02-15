@@ -981,8 +981,8 @@ named!(parse_edid<&[u8], EDID>, do_parse!(
     >> (EDID{header, display, chromaticity, established_timings, standard_timings, descriptors})
 ));
 
-pub fn parse(data: &[u8]) -> nom::IResult<&[u8], EDID> {
-    parse_edid(data)
+pub fn parse(data: &[u8]) -> Result<EDID, nom::IError<&[u8]>> {
+    parse_edid(data).to_full_result()
 }
 
 #[cfg(test)]
@@ -1124,7 +1124,7 @@ mod tests {
     }
 
     fn test(d: &[u8], expected: &EDID) {
-        match parse(d) {
+        match parse_edid(d) {
             nom::IResult::Done(remaining, parsed) => {
                 assert_eq!(remaining.len(), 0);
                 assert_eq!(&parsed, expected);
