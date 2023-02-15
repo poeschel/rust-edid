@@ -86,67 +86,57 @@ named!(parse_display<&[u8], Display>, do_parse!(
 ));
 
 #[derive(Debug, PartialEq, Copy, Clone)]
+/// Detailed timing descriptor. All tuples contain the
+/// horizontal and vertical component.
 pub struct DetailedTiming {
     /// Pixel clock in kHz.
     pub pixel_clock: u32,
-    pub horizontal_active_pixels: u16,
-    pub horizontal_blanking_pixels: u16,
-    pub vertical_active_lines: u16,
-    pub vertical_blanking_lines: u16,
-    pub horizontal_front_porch: u16,
-    pub horizontal_sync_width: u16,
-    pub vertical_front_porch: u16,
-    pub vertical_sync_width: u16,
-    /// Horizontal size in millimeters
-    pub horizontal_size: u16,
-    /// Vertical size in millimeters
-    pub vertical_size: u16,
+    pub active: (u16, u16),
+    pub blanking: (u16, u16),
+    pub front_porch: (u16, u16),
+    pub sync: (u16, u16),
+    /// Size in millimeters
+    pub size: (u16, u16),
     /// Border pixels on one side of screen (i.e. total number is twice this)
-    pub horizontal_border_pixels: u8,
-    /// Border pixels on one side of screen (i.e. total number is twice this)
-    pub vertical_border_pixels: u8,
+    pub border_pixels: (u8, u8),
     pub features: u8, /* TODO add enums etc. */
 }
 
 impl DetailedTiming {
     pub fn to_writer<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
         writer.write_all(&((self.pixel_clock / 10) as u16).to_le_bytes())?;
-        writer.write_all(&[self.horizontal_active_pixels as u8])?;
-        writer.write_all(&[self.horizontal_blanking_pixels as u8])?;
+        writer.write_all(&[self.active.0 as u8])?;
+        writer.write_all(&[self.blanking.0 as u8])?;
 
-        let byte4 = ((self.horizontal_active_pixels & 0xf00) >> 4) as u8
-            | ((self.horizontal_blanking_pixels & 0xf00) >> 8) as u8;
+        let byte4 = ((self.active.0 & 0xf00) >> 4) as u8 | ((self.blanking.0 & 0xf00) >> 8) as u8;
         writer.write_all(&[byte4])?;
 
-        writer.write_all(&[self.vertical_active_lines as u8])?;
-        writer.write_all(&[self.vertical_blanking_lines as u8])?;
+        writer.write_all(&[self.active.1 as u8])?;
+        writer.write_all(&[self.blanking.1 as u8])?;
 
-        let byte7 = ((self.vertical_active_lines & 0xf00) >> 4) as u8
-            | ((self.vertical_blanking_lines & 0xf00) >> 8) as u8;
+        let byte7 = ((self.active.1 & 0xf00) >> 4) as u8 | ((self.blanking.1 & 0xf00) >> 8) as u8;
         writer.write_all(&[byte7])?;
 
-        writer.write_all(&[self.horizontal_front_porch as u8])?;
-        writer.write_all(&[self.horizontal_sync_width as u8])?;
+        writer.write_all(&[self.front_porch.0 as u8])?;
+        writer.write_all(&[self.sync.0 as u8])?;
 
-        let byte10 = ((self.vertical_front_porch & 0x0f) << 4) as u8
-            | (self.vertical_sync_width & 0x0f) as u8;
+        let byte10 = ((self.front_porch.1 & 0x0f) << 4) as u8 | (self.sync.1 & 0x0f) as u8;
         writer.write_all(&[byte10])?;
 
-        let byte11 = ((self.horizontal_front_porch & 0x300) >> 2) as u8
-            | ((self.horizontal_sync_width & 0x300) >> 4) as u8
-            | ((self.vertical_front_porch & 0x300) >> 6) as u8
-            | ((self.vertical_sync_width & 0x300) >> 8) as u8;
+        let byte11 = ((self.front_porch.0 & 0x300) >> 2) as u8
+            | ((self.sync.0 & 0x300) >> 4) as u8
+            | ((self.front_porch.1 & 0x300) >> 6) as u8
+            | ((self.sync.1 & 0x300) >> 8) as u8;
         writer.write_all(&[byte11])?;
 
-        writer.write_all(&[self.horizontal_size as u8])?;
-        writer.write_all(&[self.vertical_size as u8])?;
+        writer.write_all(&[self.size.0 as u8])?;
+        writer.write_all(&[self.size.1 as u8])?;
 
-        let byte14 =
-            ((self.horizontal_size & 0xf00) >> 4) as u8 | ((self.vertical_size & 0xf00) >> 8) as u8;
+        let byte14 = ((self.size.0 & 0xf00) >> 4) as u8 | ((self.size.1 & 0xf00) >> 8) as u8;
         writer.write_all(&[byte14])?;
 
-        writer.write_all(&[self.horizontal_border_pixels])?;
-        writer.write_all(&[self.vertical_border_pixels])?;
+        writer.write_all(&[self.border_pixels.0])?;
+        writer.write_all(&[self.border_pixels.1])?;
         writer.write_all(&[self.features])
     }
 }
@@ -171,26 +161,27 @@ named!(parse_detailed_timing<&[u8], DetailedTiming>, do_parse!(
     >> features: le_u8
     >> (DetailedTiming {
         pixel_clock: pixel_clock_10khz as u32 * 10,
-        horizontal_active_pixels: (horizontal_active_lo as u16) |
-                                  (((horizontal_px_hi >> 4) as u16) << 8),
-        horizontal_blanking_pixels: (horizontal_blanking_lo as u16) |
-                                    (((horizontal_px_hi & 0xf) as u16) << 8),
-        vertical_active_lines: (vertical_active_lo as u16) |
-                               (((vertical_px_hi >> 4) as u16) << 8),
-        vertical_blanking_lines: (vertical_blanking_lo as u16) |
-                                 (((vertical_px_hi & 0xf) as u16) << 8),
-        horizontal_front_porch: (horizontal_front_porch_lo as u16) |
-                                (((porch_sync_hi >> 6) as u16) << 8),
-        horizontal_sync_width: (horizontal_sync_width_lo as u16) |
-                               ((((porch_sync_hi >> 4) & 0x3) as u16) << 8),
-        vertical_front_porch: ((vertical_lo >> 4) as u16) |
-                              ((((porch_sync_hi >> 2) & 0x3) as u16) << 8),
-        vertical_sync_width: ((vertical_lo & 0xf) as u16) |
-                             (((porch_sync_hi & 0x3) as u16) << 8),
-        horizontal_size: (horizontal_size_lo as u16) | (((size_hi >> 4) as u16) << 8),
-        vertical_size: (vertical_size_lo as u16) | (((size_hi & 0xf) as u16) << 8),
-        horizontal_border_pixels: horizontal_border,
-        vertical_border_pixels: vertical_border,
+        active: (
+            (horizontal_active_lo as u16) | (((horizontal_px_hi >> 4) as u16) << 8),
+            (vertical_active_lo as u16) | (((vertical_px_hi >> 4) as u16) << 8),
+        ),
+        blanking: (
+            (horizontal_blanking_lo as u16) | (((horizontal_px_hi & 0xf) as u16) << 8),
+            (vertical_blanking_lo as u16) | (((vertical_px_hi & 0xf) as u16) << 8),
+        ),
+        front_porch: (
+            (horizontal_front_porch_lo as u16) | (((porch_sync_hi >> 6) as u16) << 8),
+            ((vertical_lo >> 4) as u16) | ((((porch_sync_hi >> 2) & 0x3) as u16) << 8),
+        ),
+        sync: (
+            (horizontal_sync_width_lo as u16) | ((((porch_sync_hi >> 4) & 0x3) as u16) << 8),
+            ((vertical_lo & 0xf) as u16) | (((porch_sync_hi & 0x3) as u16) << 8),
+        ),
+        size: (
+            (horizontal_size_lo as u16) | (((size_hi >> 4) as u16) << 8),
+            (vertical_size_lo as u16) | (((size_hi & 0xf) as u16) << 8),
+        ),
+        border_pixels: (horizontal_border, vertical_border),
         features,
     })
 ));
@@ -1064,18 +1055,12 @@ mod tests {
                 descriptors: Descriptors(vec![
                     Descriptor::DetailedTiming(DetailedTiming {
                         pixel_clock: 146250,
-                        horizontal_active_pixels: 1680,
-                        horizontal_blanking_pixels: 560,
-                        vertical_active_lines: 1050,
-                        vertical_blanking_lines: 39,
-                        horizontal_front_porch: 104,
-                        horizontal_sync_width: 176,
-                        vertical_front_porch: 3,
-                        vertical_sync_width: 6,
-                        horizontal_size: 474,
-                        vertical_size: 296,
-                        horizontal_border_pixels: 0,
-                        vertical_border_pixels: 0,
+                        active: (1680, 1050),
+                        blanking: (560, 39),
+                        front_porch: (104, 3),
+                        sync: (176, 6),
+                        size: (474, 296),
+                        border_pixels: (0, 0),
                         features: 28,
                     }),
                     Descriptor::RangeLimits([
@@ -1119,18 +1104,12 @@ mod tests {
                 descriptors: Descriptors(vec![
                     Descriptor::DetailedTiming(DetailedTiming {
                         pixel_clock: 138500,
-                        horizontal_active_pixels: 1920,
-                        horizontal_blanking_pixels: 160,
-                        vertical_active_lines: 1080,
-                        vertical_blanking_lines: 31,
-                        horizontal_front_porch: 48,
-                        horizontal_sync_width: 32,
-                        vertical_front_porch: 3,
-                        vertical_sync_width: 5,
-                        horizontal_size: 294,
-                        vertical_size: 165,
-                        horizontal_border_pixels: 0,
-                        vertical_border_pixels: 0,
+                        active: (1920, 1080),
+                        blanking: (160, 31),
+                        front_porch: (48, 3),
+                        sync: (32, 5),
+                        size: (294, 165),
+                        border_pixels: (0, 0),
                         features: 24,
                     }),
                     Descriptor::Dummy,
