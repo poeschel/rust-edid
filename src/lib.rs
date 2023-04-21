@@ -85,6 +85,258 @@ named!(parse_display<&[u8], Display>, do_parse!(
     >> (Display{video_input, width, height, gamma, features})
 ));
 
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Interlace {
+    Interlaced,
+    NonInterlaced
+}
+
+impl From<u8> for Interlace {
+    fn from(val: u8) -> Self {
+        if val & 0b1000_0000 > 0 {
+            Interlace::Interlaced
+        } else {
+            Interlace::NonInterlaced
+        }
+    }
+}
+
+impl Interlace {
+    fn into_u8(self) -> u8 {
+        match self {
+            Interlace::Interlaced       => 1 << 7,
+            Interlace::NonInterlaced    => 0
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum StereoMode {
+    NonStereo,
+    FieldSequentialRightWhenSync,
+    FieldSequentialLeftWhenSync,
+    TwoWayInterleavedRightOnEvenLines,
+    TwoWayInterleavedLeftOnEvenLines,
+    FourWayInterleaved,
+    SideBySide
+}
+
+impl From<u8> for StereoMode {
+    fn from(val: u8) -> Self {
+        let bit0 = val & 0b0000_0001;
+        let stereobits = (val & 0b0110_0000) >> 4 | bit0;
+        match stereobits {
+            0b010 => StereoMode::FieldSequentialRightWhenSync,
+            0b100 => StereoMode::FieldSequentialLeftWhenSync,
+            0b011 => StereoMode::TwoWayInterleavedRightOnEvenLines,
+            0b101 => StereoMode::TwoWayInterleavedLeftOnEvenLines,
+            0b110 => StereoMode::FourWayInterleaved,
+            0b111 => StereoMode::SideBySide,
+            _ => StereoMode::NonStereo,
+        }
+    }
+}
+
+impl StereoMode {
+    fn into_u8(self) -> u8 {
+        let bit65;
+        let bit0;
+        match self {
+            StereoMode::NonStereo => { bit65 = 0; bit0 = 0; },
+            StereoMode::FieldSequentialRightWhenSync => { bit65 = 0b01 << 5; bit0 = 0; },
+            StereoMode::FieldSequentialLeftWhenSync => { bit65 = 0b10 << 5; bit0 = 0; },
+            StereoMode::TwoWayInterleavedRightOnEvenLines => { bit65 = 0b01 << 5; bit0 = 1; },
+            StereoMode::TwoWayInterleavedLeftOnEvenLines => { bit65 = 0b10 << 5; bit0 = 1; },
+            StereoMode::FourWayInterleaved => { bit65 = 0b11 << 5; bit0 = 0; },
+            StereoMode::SideBySide => { bit65 = 0b11 << 5; bit0 = 0; }
+        }
+
+        bit65 | bit0
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum Serrate {
+    HsyncDuringVsync,
+    Without
+}
+
+impl From<u8> for Serrate {
+    fn from(val: u8) -> Self {
+        if val & 0b0100 > 0 {
+            Serrate::HsyncDuringVsync
+        } else {
+            Serrate::Without
+        }
+    }
+}
+
+impl Serrate {
+    fn into_u8(self) -> u8 {
+        match self {
+            Serrate::HsyncDuringVsync  => 1 << 2,
+            Serrate::Without           => 0
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum OnRgb {
+    RgbSync,
+    GreenSync
+}
+
+impl From<u8> for OnRgb {
+    fn from(val: u8) -> Self {
+        if val & 0b0010 > 0 {
+            OnRgb::RgbSync
+        } else {
+            OnRgb::GreenSync
+        }
+    }
+}
+
+impl OnRgb {
+    fn into_u8(self) -> u8 {
+        match self {
+            OnRgb::RgbSync     => 1 << 1,
+            OnRgb::GreenSync   => 0
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum CompositePolarity {
+    Positive,
+    Negative
+}
+
+impl From<u8> for CompositePolarity {
+    fn from(val: u8) -> Self {
+        if val & 0b0010 > 0 {
+            CompositePolarity::Positive
+        } else {
+            CompositePolarity::Negative
+        }
+    }
+}
+
+impl CompositePolarity {
+    fn into_u8(self) -> u8 {
+        match self {
+            CompositePolarity::Positive => 1 << 1,
+            CompositePolarity::Negative => 0
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum VerticalSyncPolarity {
+    Positive,
+    Negative
+}
+
+impl From<u8> for VerticalSyncPolarity {
+    fn from(val: u8) -> Self {
+        if val & 0b0100 > 0 {
+            VerticalSyncPolarity::Positive
+        } else {
+            VerticalSyncPolarity::Negative
+        }
+    }
+}
+
+impl VerticalSyncPolarity {
+    fn into_u8(self) -> u8 {
+        match self {
+            VerticalSyncPolarity::Positive => 1 << 2,
+            VerticalSyncPolarity::Negative => 0
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum HorizontalSyncPolarity {
+    Positive,
+    Negative
+}
+
+impl From<u8> for HorizontalSyncPolarity {
+    fn from(val: u8) -> Self {
+        if val & 0b0010 > 0 {
+            HorizontalSyncPolarity::Positive
+        } else {
+            HorizontalSyncPolarity::Negative
+        }
+    }
+}
+
+impl HorizontalSyncPolarity {
+    fn into_u8(self) -> u8 {
+        match self {
+            HorizontalSyncPolarity::Positive => 1 << 1,
+            HorizontalSyncPolarity::Negative => 0
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum SyncType {
+    AnalogComposite(Serrate, OnRgb),
+    BipolarAnalogComposite(Serrate, OnRgb),
+    DigitalComposite(Serrate, CompositePolarity),
+    DigitalSeparate(VerticalSyncPolarity, HorizontalSyncPolarity)
+}
+
+impl From<u8> for SyncType {
+    fn from(val: u8) -> Self {
+        match (val & 0b0001_1000) >> 3 {
+            0b01 => {
+                SyncType::BipolarAnalogComposite(Serrate::from(val), OnRgb::from(val))
+            },
+            0b10 => {
+                SyncType::DigitalComposite(Serrate::from(val), CompositePolarity::from(val))
+            },
+            0b11 => {
+                SyncType::DigitalSeparate(VerticalSyncPolarity::from(val), HorizontalSyncPolarity::from(val))
+            },
+            _ => {
+                SyncType::AnalogComposite(Serrate::from(val), OnRgb::from(val))
+            }
+        }
+    }
+}
+
+impl SyncType {
+    fn into_u8(self) -> u8 {
+        match self {
+            SyncType::AnalogComposite(s, o) => s.into_u8() | o.into_u8(),
+            SyncType::BipolarAnalogComposite(s, o) => 0b01 << 3 | s.into_u8() | o.into_u8(),
+            SyncType::DigitalComposite(s, c) => 0b10 << 3 | s.into_u8() | c.into_u8(),
+            SyncType::DigitalSeparate(v, h) => 0b11 << 3 | v.into_u8() | h.into_u8(),
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub struct DetailedTimingFeatures {
+    pub interlace: Interlace,
+    pub stereomode: StereoMode,
+    pub synctype: SyncType
+}
+
+impl From<u8> for DetailedTimingFeatures {
+    fn from(val: u8) -> Self {
+        DetailedTimingFeatures{ interlace: Interlace::from(val), stereomode: StereoMode::from(val), synctype: SyncType::from(val) }
+    }
+}
+
+impl DetailedTimingFeatures {
+    fn into_u8(self) -> u8 {
+        self.interlace.into_u8() | self.stereomode.into_u8() | self.synctype.into_u8()
+    }
+}
+
 #[derive(Debug, PartialEq, Copy, Clone)]
 /// Detailed timing descriptor. All tuples contain the
 /// horizontal and vertical component.
@@ -99,7 +351,7 @@ pub struct DetailedTiming {
     pub size: (u16, u16),
     /// Border pixels on one side of screen (i.e. total number is twice this)
     pub border_pixels: (u8, u8),
-    pub features: u8, /* TODO add enums etc. */
+    pub features: DetailedTimingFeatures,
 }
 
 impl DetailedTiming {
@@ -137,7 +389,7 @@ impl DetailedTiming {
 
         writer.write_all(&[self.border_pixels.0])?;
         writer.write_all(&[self.border_pixels.1])?;
-        writer.write_all(&[self.features])
+        writer.write_all(&[self.features.into_u8()])
     }
 }
 
@@ -182,7 +434,7 @@ named!(parse_detailed_timing<&[u8], DetailedTiming>, do_parse!(
             (vertical_size_lo as u16) | (((size_hi & 0xf) as u16) << 8),
         ),
         border_pixels: (horizontal_border, vertical_border),
-        features,
+        features: DetailedTimingFeatures::from(features),
     })
 ));
 
@@ -1061,7 +1313,10 @@ mod tests {
                         sync: (176, 6),
                         size: (474, 296),
                         border_pixels: (0, 0),
-                        features: 28,
+                        features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                            stereomode: StereoMode::NonStereo,
+                            synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Positive, HorizontalSyncPolarity::Negative)
+                        }
                     }),
                     Descriptor::RangeLimits([
                         0x00, 0x38, 0x4B, 0x1E, 0x51, 0x11, 0x00, 0x0A, 0x20, 0x20, 0x20, 0x20,
@@ -1110,7 +1365,10 @@ mod tests {
                         sync: (32, 5),
                         size: (294, 165),
                         border_pixels: (0, 0),
-                        features: 24,
+                        features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                            stereomode: StereoMode::NonStereo,
+                            synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Negative, HorizontalSyncPolarity::Negative)
+                        }
                     }),
                     Descriptor::Dummy,
                     Descriptor::UnspecifiedText(DescriptorText::new("DJCP6ÇLQ133M1").unwrap()),
