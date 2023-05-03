@@ -908,6 +908,161 @@ impl EstablishedTiming {
             EstablishedTiming::Other(_) => None,
         }
     }
+
+    pub fn as_detailed_timing(&self) -> Option<DetailedTiming> {
+        match self {
+            EstablishedTiming::H720V400F70 => None,
+            EstablishedTiming::H720V400F88 => None,
+            EstablishedTiming::H640V480F60 => Some(DetailedTiming {
+                pixel_clock: 25175,
+                active: (640, 480),
+                blanking: (200, 20),
+                front_porch: (16, 1),
+                sync: (64, 3),
+                size: (0, 0),
+                border_pixels: (16, 16),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Negative, HorizontalSyncPolarity::Negative)
+                }
+            }),
+            EstablishedTiming::H640V480F67 => None,
+            EstablishedTiming::H640V480F72 => Some(DetailedTiming {
+                pixel_clock: 31500,
+                active: (640, 480),
+                blanking: (176, 24),
+                front_porch: (16, 1),
+                sync: (40, 2),
+                size: (0, 0),
+                border_pixels: (16, 16),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Negative, HorizontalSyncPolarity::Negative)
+                }
+            }),
+            EstablishedTiming::H640V480F75 => Some(DetailedTiming {
+                pixel_clock: 31500,
+                active: (640, 480),
+                blanking: (144, 29),
+                front_porch: (8, 2),
+                sync: (96, 2),
+                size: (0, 0),
+                border_pixels: (0, 0),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Negative, HorizontalSyncPolarity::Negative)
+                }
+            }),
+            EstablishedTiming::H800V600F56 => Some(DetailedTiming {
+                pixel_clock: 36000,
+                active: (800, 600),
+                blanking: (224, 25),
+                front_porch: (24, 1),
+                sync: (72, 2),
+                size: (0, 0),
+                border_pixels: (0, 0),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Positive, HorizontalSyncPolarity::Positive)
+                }
+            }),
+            EstablishedTiming::H800V600F60 => Some(DetailedTiming {
+                pixel_clock: 36000,
+                active: (800, 600),
+                blanking: (256, 28),
+                front_porch: (40, 1),
+                sync: (128, 4),
+                size: (0, 0),
+                border_pixels: (0, 0),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Positive, HorizontalSyncPolarity::Positive)
+                }
+            }),
+            EstablishedTiming::H800V600F72 => Some(DetailedTiming {
+                pixel_clock: 50000,
+                active: (800, 600),
+                blanking: (240, 66),
+                front_porch: (56, 37),
+                sync: (120, 6),
+                size: (0, 0),
+                border_pixels: (0, 0),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Positive, HorizontalSyncPolarity::Positive)
+                }
+            }),
+            EstablishedTiming::H800V600F75 => Some(DetailedTiming {
+                pixel_clock: 49500,
+                active: (800, 600),
+                blanking: (256, 25),
+                front_porch: (16, 1),
+                sync: (80, 3),
+                size: (0, 0),
+                border_pixels: (0, 0),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Positive, HorizontalSyncPolarity::Positive)
+                }
+            }),
+            EstablishedTiming::H832V624F75 => None,
+            EstablishedTiming::H1024V768F87 => None,
+            EstablishedTiming::H1024V768F60 => Some(DetailedTiming {
+                pixel_clock: 65000,
+                active: (1024, 768),
+                blanking: (320, 38),
+                front_porch: (24, 3),
+                sync: (136, 6),
+                size: (0, 0),
+                border_pixels: (0, 0),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Negative, HorizontalSyncPolarity::Negative)
+                }
+            }),
+            EstablishedTiming::H1024V768F70 => Some(DetailedTiming {
+                pixel_clock: 75000,
+                active: (1024, 768),
+                blanking: (304, 38),
+                front_porch: (24, 3),
+                sync: (136, 6),
+                size: (0, 0),
+                border_pixels: (0, 0),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Negative, HorizontalSyncPolarity::Negative)
+                }
+            }),
+            EstablishedTiming::H1024V768F75 => Some(DetailedTiming {
+                pixel_clock: 78750,
+                active: (1024, 768),
+                blanking: (288, 32),
+                front_porch: (16, 1),
+                sync: (96, 3),
+                size: (0, 0),
+                border_pixels: (0, 0),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Negative, HorizontalSyncPolarity::Negative)
+                }
+            }),
+            EstablishedTiming::H1280V1024F75 => Some(DetailedTiming {
+                pixel_clock: 135000,
+                active: (1280, 1024),
+                blanking: (408, 42),
+                front_porch: (16, 1),
+                sync: (144, 3),
+                size: (0, 0),
+                border_pixels: (0, 0),
+                features: DetailedTimingFeatures{ interlace: Interlace::NonInterlaced,
+                    stereomode: StereoMode::NonStereo,
+                    synctype: SyncType::DigitalSeparate(VerticalSyncPolarity::Positive, HorizontalSyncPolarity::Positive)
+                }
+            }),
+            EstablishedTiming::H1152V870F75 => None,
+            EstablishedTiming::Other(_) => None,
+        }
+    }
 }
 
 // TODO: this is likely not in the spirit of nom, find a better way
